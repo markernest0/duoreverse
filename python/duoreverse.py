@@ -44,6 +44,8 @@ def parse_args():
     parser.error = parser_error
     parser._optionals.title = "OPTIONS"
     ### RECONNAISSANCE
+    recon_admin_email = parser.add_argument_group("RECONNAISSANCE -- FIND ADMINS")
+    recon_admin_email.add_argument('-rae', '--recon_admin_email', help='Enter the email of the admin to recon')
     ### PERSISTENCE
     persistence_adduser = parser.add_argument_group("PERSISTENCE -- ADD USER")
     persistence_adduser.add_argument('-au', '--add_user', help='Enter the username to create')
@@ -76,7 +78,7 @@ def parse_args():
     impact_delintegration.add_argument('-di', '--delete_integration', help='Delete a specific integration')
     return parser.parse_args()
 
-def main(adduser, addadminname, addadminemail, addadminphone, addapiintegration, moduserid, modstatus, listuser, listusers, listadmins, listgroups, listintegrations, deleteuser, deleteadmin, deleteintegration):
+def main(reconadminemail, adduser, addadminname, addadminemail, addadminphone, addapiintegration, moduserid, modstatus, listuser, listusers, listadmins, listgroups, listintegrations, deleteuser, deleteadmin, deleteintegration):
     # Parse env file and connect to Splunk
     try:
       load_dotenv()
@@ -92,6 +94,11 @@ def main(adduser, addadminname, addadminemail, addadminphone, addapiintegration,
       print(bcolors.ERROR + "##### ERROR -", e, "Check the .env file parameters" + bcolors.ENDC)
       print('\n')
       sys.exit(1)
+
+    # RECONNAISSANCE
+    # Search an admin email
+    if reconadminemail is not None:
+      recon_admin_email(reconadminemail, admin_api)
 
     # PERSISTENCE
     # Create a new user
@@ -176,19 +183,50 @@ def add_admin(addadminname, addadminemail, addadminphone, admin_api):
       name=addadminname,
       email=addadminemail,
       phone=addadminphone,
-      password="",
-      send_email='1'
+      password=""
     )
     print(bcolors.UPDATE + "##### UPDATE - The admin", addadminname, "was created and an activation email was sent to", addadminemail, bcolors.ENDC)
     print('\n')
+    
   except Exception as e:
     if e.status == 403:
       print(bcolors.ERROR + "##### ERROR -", e, "- Check the Admin API \"Grant administrators\" permission" + bcolors.ENDC)
     else:
       print(bcolors.ERROR + "##### ERROR -", e, bcolors.ENDC)
+      if str(e) == "Received 400 Invalid request parameters (The provided email address is already in use by another admin.)":
+        print("ADMIN USER FOUND: ", addadminemail)
     print('\n')
     sys.exit(1)
 
+# Admin recon
+# https://duo.com/docs/adminapi#create-administrator
+def recon_admin_email(reconadminemail, admin_api):
+    try:
+        # Try to add a new admin using the Duo Admin API
+        admin = admin_api.add_admin(
+            name=reconadminemail,
+            email=reconadminemail,
+            phone="+17345551212",
+            password=""
+        )
+        list_new_admin(reconadminemail, admin_api)
+
+    except Exception as e:
+        # If an exception occurs, handle it
+        if e.status == 403:
+            # If the exception status is 403, print an error related to permissions
+            print(bcolors.ERROR + "##### ERROR -", e, "- Check the Admin API \"Grant administrators\" permission" + bcolors.ENDC)
+        else:
+            # Print existing admin email
+            if str(e) == "Received 400 Invalid request parameters (The provided email address is already in use by another admin.)":
+                # If the email address is already in use, print a message
+                print("ADMIN USER FOUND: ", reconadminemail)
+            # For other exceptions, print a general error message
+            else:
+              print(bcolors.ERROR + "##### ERROR -", e, bcolors.ENDC)
+        print('\n')
+        sys.exit(1)  # Exit the script with an error code
+    
 # Create new API integration function
 # https://duo.com/docs/adminapi#create-integration
 def add_api_integration(addapiintegration, admin_api):
@@ -381,6 +419,38 @@ def list_groups(listgroups, admin_api):
   print(table)
   print('\n')
 
+# After creating a new admin, list the admin ID. Used for admin recon.
+# https://duo.com/docs/adminapi#retrieve-administrators
+def list_new_admin(search_email, admin_api):
+    try:
+        # Try to retrieve information about all administrators using the Duo Admin API
+        admins = admin_api.get_admins()
+        
+    except Exception as e:
+        # If an exception occurs, handle it
+        if e.status == 403:
+            # If the exception status is 403, print an error related to permissions
+            print(bcolors.ERROR + "##### ERROR -", e, "- Check the Admin API \"Grant administrators\" and \"Grant read resource\" permissions" + bcolors.ENDC)
+        else:
+            # For other exceptions, print a general error message
+            print(bcolors.ERROR + "##### ERROR -", e, bcolors.ENDC)
+        
+        print('\n')
+        sys.exit(1)  # Exit the script with an error code
+    
+    # Check if the search_email matches any admin's email and print the corresponding Admin ID
+    found_admin_id = None
+    for admin in admins:
+        if admin["email"] == search_email:
+            found_admin_id = admin["admin_id"]
+            break
+    
+    if found_admin_id is not None:
+        print(f"Admin ID for email '{search_email}': {found_admin_id}")
+        del_admin(found_admin_id, admin_api)
+    else:
+        print(f"No admin found with email '{search_email}'")
+
 # List all integrations
 # https://duo.com/docs/adminapi#retrieve-integrations
 def list_integrations(listintegrations, admin_api):
@@ -472,6 +542,7 @@ def del_integration(deleteintegration, admin_api):
 # All the argparse options returned to main
 def interactive():
     args = parse_args()
+    reconadminemail = args.recon_admin_email
     adduser = args.add_user
     addadminname = args.add_admin_name
     addadminemail = args.add_admin_email
@@ -488,6 +559,7 @@ def interactive():
     deleteadmin = args.delete_admin
     deleteintegration = args.delete_integration
     res = main(
+      reconadminemail,
       adduser,
       addadminname,
       addadminemail,
@@ -506,5 +578,3 @@ def interactive():
     
 if __name__ == "__main__":
     interactive()
-
-
